@@ -8,6 +8,7 @@ import 'package:mplayer/listItem.dart';
 import 'package:rxdart/rxdart.dart';
 
 const defaultTracksPath = "/home/saintfts/Music/";
+const acceptedAudioFormats = "wav|flac|mp3";
 void main() {
   JustAudioMediaKit.ensureInitialized();
   runApp(const MPlayerApp());
@@ -29,86 +30,101 @@ class MPlayer extends StatefulWidget {
 }
 
 class _MPlayerState extends State<MPlayer> {
+
+
   int _pageIndex = 0;
 
   List<Track> _tracksFiles = [];
 
   var tracksPath = defaultTracksPath;
   final _player = AudioPlayer();
-  bool isPaused = true;
+  final ValueNotifier<bool> _isPaused = ValueNotifier(true);
   ProcessingState? playerState;
   Track? currentTrack;
-  int trackIter = 0;
   TextEditingController? _settingPathToTracksController;
+  final ValueNotifier<int> _tracksIter = ValueNotifier(-1);
 
+  Widget? _tracksPage;
+  Widget? _settingsPage;
+
+  void _refreshTracksPage(){
+    _tracksPage = _buildTrackList();
+  }
   @override
   void initState() {
     super.initState();
+
     _tracksFiles = _getTrackFiles(tracksPath);
     _settingPathToTracksController = TextEditingController(text: tracksPath);
     _player.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) {
-        if (_tracksFiles.isNotEmpty) {
-          currentTrack = _tracksFiles.first;
-        }
-        setState(() {
-          playerState = state;
-          isPaused = true;
-          _nextTrack();
-          _playMusic(currentTrack!);
-        });
+        playerState = state;
+        _isPaused.value = true;
+        _nextTrack();
+        _playMusic(currentTrack!);
       }
     });
+    _tracksPage = _buildTrackList();
+    _settingsPage = _buildSettingsPage();
+  }
+  
+  void _defaultThePlayerBackend(){
+    _tracksIter.value = -1;
+    _player.setAudioSource(AudioSource.file(""));
+    tracksPath = defaultTracksPath;
+    _isPaused.value = true;
+    _tracksFiles = _getTrackFiles(tracksPath);
   }
 
   void _togglePause() {
-    setState(() {
-      if (_player.playing && !isPaused) {
-        isPaused = true;
-        _player.pause();
-      } else {
-        isPaused = false;
-        _player.play();
-      }
-    });
+    if (_player.playing && !_isPaused.value) {
+      _isPaused.value = true;
+      _player.pause();
+    } else {
+      _isPaused.value = false;
+      _player.play();
+    }
   }
 
   void _prevTrack() {
-    trackIter--;
-    if (trackIter < 0) {
-      trackIter = _tracksFiles.length - 1;
+    _tracksIter.value--;
+    if (_tracksIter.value < 0) {
+      _tracksIter.value = _tracksFiles.length - 1;
     }
-    currentTrack = _tracksFiles[trackIter];
+    currentTrack = _tracksFiles[_tracksIter.value];
   }
 
   void _nextTrack() {
-    trackIter++;
-    if (trackIter >= _tracksFiles.length) {
-      trackIter = 0;
+    if (_tracksIter.value == -1){
+      return;
     }
-    currentTrack = _tracksFiles[trackIter];
+    _tracksIter.value++;
+    if (_tracksIter.value >= _tracksFiles.length) {
+      _tracksIter.value = 0;
+    }
+    currentTrack = _tracksFiles[_tracksIter.value];
   }
 
   void _playMusic(Track track) async {
     if (currentTrack != track) {
       currentTrack = track;
     }
+    _isPaused.value = false;
     var audioSource = AudioSource.file(track.path);
     await _player.setAudioSource(audioSource);
     await _player.play();
-
-    setState(() {
-      isPaused = false;
-    });
   }
 
   List<Track> _getTrackFiles(String path) {
     final scanDir = io.Directory(path);
+    if (!scanDir.existsSync()) {
+      return [];
+    }
     final tracks = scanDir
         .listSync()
         .where(
           (file) => RegExp(
-            r'\.(wav|mp3|flac)',
+            '\\.($acceptedAudioFormats)',
             caseSensitive: false,
           ).hasMatch(file.path),
         )
@@ -155,10 +171,8 @@ class _MPlayerState extends State<MPlayer> {
                 ),
                 Expanded(
                   child: switch (_pageIndex) {
-                    0 => () {
-                      return _buildTrackList();
-                    }(),
-                    1 => _buildSettingsPage(),
+                    0 => _tracksPage ?? Text("No tracks found"),
+                    1 => _settingsPage ?? Text("You managed to break the settings page..."),
                     _ => const Text("Error in _pageIndex"),
                   },
                 ),
@@ -172,7 +186,7 @@ class _MPlayerState extends State<MPlayer> {
   }
 
   Widget _buildTrackList() {
-    _tracksFiles = _getTrackFiles(tracksPath);
+  //_defaultThePlayerBackend();
     if (_tracksFiles.isEmpty) {
       return const Center(child: Text("No music found."));
     }
@@ -180,15 +194,19 @@ class _MPlayerState extends State<MPlayer> {
       itemCount: _tracksFiles.length,
       itemBuilder: (context, index) {
         final track = _tracksFiles[index];
-        return TrackTile(
-          track: track,
-          isPlaying: index == trackIter,
-          onPlay: (track) {
-            trackIter = index;
-            setState(() {
-              print(trackIter);
-              _playMusic(track);
-            });
+
+        return ValueListenableBuilder<int>(
+          valueListenable: _tracksIter,
+          builder: (_, playingIndex, _){
+              return TrackTile(
+                track: track,
+                isPlaying: index == playingIndex,
+                onPlay: (track) {
+                  _tracksIter.value = index;
+                  print(_tracksIter.value);
+                  _playMusic(track);
+                },
+              );
           },
         );
       },
@@ -205,13 +223,10 @@ class _MPlayerState extends State<MPlayer> {
             ElevatedButton(
               child: Text("Refresh tracks path"),
               onPressed: () {
-                setState(() {
-                  trackIter = -1;
-                  _player.setAudioSource(AudioSource.file(""));
-                  currentTrack = null;
-                  isPaused = true;
-                  tracksPath = _settingPathToTracksController!.text;
-                });
+                _defaultThePlayerBackend();
+                tracksPath = _settingPathToTracksController!.text;
+                _tracksFiles = _getTrackFiles(tracksPath);
+                _refreshTracksPage();
               },
             ),
           ],
@@ -244,12 +259,10 @@ class _MPlayerState extends State<MPlayer> {
                 },
                 onChangeEnd: (d) {
                   _player.seek(d);
-                  if ((_player.duration! - _player.position) <
-                      Duration(milliseconds: 1)) {
-                    _nextTrack();
-                    _player.setFilePath(currentTrack!.path);
+                  if ((_player.duration! - _player.position) < Duration(milliseconds: 1)) {
+                      _player.stop();
                   }
-                  if (!isPaused) {
+                  if (!_isPaused.value) {
                     _player.play();
                   }
                 },
@@ -265,23 +278,24 @@ class _MPlayerState extends State<MPlayer> {
                     IconButton(
                       icon: Icon(Icons.fast_rewind),
                       onPressed: () {
-                        setState(() {
-                          _prevTrack();
-                          _playMusic(currentTrack!);
-                        });
+                        _prevTrack();
+                        _playMusic(currentTrack!);
                       },
                     ),
-                    IconButton(
-                      icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
-                      onPressed: _togglePause,
+                    ValueListenableBuilder(
+                      valueListenable: _isPaused,
+                      builder: (_, isPaused, _){
+                        return IconButton(
+                          icon: Icon(isPaused? Icons.play_arrow : Icons.pause),
+                          onPressed: _togglePause,
+                        );
+                      },
                     ),
                     IconButton(
                       icon: Icon(Icons.fast_forward),
                       onPressed: () {
-                        setState(() {
-                          _nextTrack();
-                          _playMusic(currentTrack!);
-                        });
+                        _nextTrack();
+                        _playMusic(currentTrack!);
                       },
                     ),
                   ],
