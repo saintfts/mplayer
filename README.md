@@ -12,9 +12,11 @@ A really basic music player built in Flutter and just_audio
 
 ### Plans:
 * Image covers for each song
-* More customization
-* Streaming services playback
-* Proper code refactoring
 * Albums support
+* More customization
+* Music streaming services playback
 * Music ordering & shuffling & shuffling + ordered playback
+* Background playback
+* Adjust UI for specific platforms (Mobile/Desktop)
+* Proper code refactoring & performance optimizations
 * etc.
